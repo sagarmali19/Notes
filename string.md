@@ -357,6 +357,3 @@ String s = new String("hello");
 | substring() fix (Java 7+) | No longer shares backing array — prevents memory leaks |
 
 ---
-
-### Suggested Follow-Up Topics to Prep Next
-Collections (HashMap internals), Multithreading/Concurrency, JVM memory model, Streams API, Exception handling, Spring Boot core annotations.
