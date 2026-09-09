@@ -171,6 +171,174 @@ class OrderService {
     public OrderService(@Qualifier("upiProcessor") PaymentProcessor processor) { ... }
 }
 ```
+### Spring Beans & Dependency Injection
+
+### What is a Bean?
+A **bean** is an object whose lifecycle (creation, configuration, wiring, destruction) is managed by the Spring IoC container instead of by your own code with `new`.
+
+### Declaring Beans — Component Annotations
+Spring finds classes to turn into beans via **stereotype annotations**:
+
+| Annotation | Purpose |
+|---|---|
+| `@Component` | Generic bean, base annotation for the others |
+| `@Service` | Business/service layer (semantic marker) |
+| `@Repository` | Persistence layer; also enables exception translation (DB exceptions → Spring's `DataAccessException`) |
+| `@RestController` | `@Controller` + `@ResponseBody`; web layer, returns JSON/XML directly |
+
+```java
+@Service
+public class OrderService {
+    // becomes a Spring-managed bean
+}
+```
+
+### Component Scanning
+Spring needs to know **where to look** for these annotated classes — that's **component scanning**.
+
+- **Spring Boot**: automatic. `@SpringBootApplication` includes `@ComponentScan` on the package it's in (and sub-packages), so no extra config needed as long as your classes are under the main application's package.
+- **Classic Spring**: manual. You need:
+```java
+  @Configuration
+  @ComponentScan(basePackages = "com.example.app")
+  public class AppConfig { }
+```
+or the XML equivalent (`<context:component-scan base-package="..."/>`).
+
+---
+
+### Dependency Injection — Preferred Approach: Constructor Injection
+
+```java
+@Service
+public class OrderService {
+
+    private final PaymentGateway paymentGateway; // interface, not impl
+
+    // With one constructor, @Autowired is optional (Spring 4.3+)
+    public OrderService(PaymentGateway paymentGateway) {
+        this.paymentGateway = paymentGateway;
+    }
+}
+```
+
+**Why constructor injection is preferred:**
+- Allows fields to be `final` → immutability.
+- Makes dependencies explicit and required.
+- **Fails fast**: if a dependency is missing/misconfigured, the app won't even start (fails at context startup), instead of throwing a `NullPointerException` at runtime deep in some call path.
+- Easy to unit test — just call `new OrderService(mockGateway)`, no container needed.
+
+---
+
+### Autowiring by Type
+
+By default, `@Autowired` resolves by **type**.
+
+```java
+public interface PaymentGateway { }
+
+@Component
+public class StripeGateway implements PaymentGateway { }
+```
+
+If there's exactly **one** implementation, Spring injects it automatically.
+
+### Multiple Implementations → `@Qualifier`
+
+If there are **multiple beans of the same type**, Spring can't pick one — you disambiguate with `@Qualifier`.
+
+```java
+@Component("stripeGateway")
+public class StripeGateway implements PaymentGateway { }
+
+@Component("paypalGateway")
+public class PaypalGateway implements PaymentGateway { }
+
+@Service
+public class OrderService {
+    private final PaymentGateway paymentGateway;
+
+    public OrderService(@Qualifier("stripeGateway") PaymentGateway paymentGateway) {
+        this.paymentGateway = paymentGateway;
+    }
+}
+```
+
+### Default Choice → `@Primary`
+
+Mark one implementation as the **default** when multiple exist, so callers don't need `@Qualifier` unless they want a non-default one.
+
+```java
+@Component
+@Primary
+public class StripeGateway implements PaymentGateway { }
+
+@Component
+public class PaypalGateway implements PaymentGateway { }
+```
+
+### By Name → `@Resource`
+
+`@Resource` (JSR-250, `javax.annotation` / `jakarta.annotation`) injects **by name first**, falling back to type.
+
+```java
+@Resource(name = "paypalGateway")
+private PaymentGateway paymentGateway;
+```
+Contrast: `@Autowired` = by type (+ `@Qualifier` for name); `@Resource` = by name (+ type fallback).
+
+### Injecting Properties → `@Value`
+
+```java
+@Value("${payment.api-key}")
+private String apiKey;
+```
+Pulls from `application.properties` / `application.yml`, env vars, etc.
+
+---
+
+### Inject Interfaces, Not Implementations
+
+```java
+// Good — depends on abstraction
+private final PaymentGateway gateway;
+
+// Bad — tightly coupled to concrete class
+private final StripeGateway gateway;
+```
+**Why:** loose coupling (swap implementations without touching consumers), easier mocking in unit tests, aligns with Dependency Inversion Principle.
+
+---
+
+### Circular Dependencies
+
+Happens when Bean A needs Bean B, and Bean B needs Bean A.
+
+```java
+@Component
+class A { A(B b) {} }
+
+@Component
+class B { B(A a) {} }
+```
+
+- With **constructor injection**, this **fails fast at startup** with `BeanCurrentlyInCreationException` — Spring literally cannot construct either bean first.
+- With **field/setter injection**, Spring can sometimes resolve this by injecting a half-initialized bean — which **hides a design problem** instead of surfacing it.
+
+**Correct fix:** refactor — usually means:
+- Extract shared logic into a third bean that both A and B depend on.
+- Merge A and B if they're really one responsibility.
+- Use events (`ApplicationEventPublisher`) to decouple the interaction.
+
+**Anti-pattern to avoid:** using `@Lazy` on one of the constructor params just to "make the circular dependency go away.” This papers over bad design instead of fixing it — the coupling issue still exists, just deferred to first use.
+
+```java
+// Avoid this "fix"
+public A(@Lazy B b) { this.b = b; }
+```
+
+**Interview soundbite:**
+> "Constructor injection is preferred because it enforces required dependencies, enables immutability, and fails fast at startup rather than at runtime. If you hit a circular dependency, that's a design smell — the right move is to refactor (extract a shared collaborator, or use events), not to reach for `@Lazy` or field injection to mask it."
 
 ---
 
@@ -529,6 +697,7 @@ Car car = ctx.getBean(Car.class);
 ```
 
 **Stereotype annotations** — all meta-annotated with `@Component`, but convey semantic intent:
+
 | Annotation | Layer |
 |---|---|
 | `@Component` | Generic bean |
